@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>NIDS Dashboard</title>
+    <style>
+        body {
+            font-family: Arial;
+            background: #1e1e2f;
+            color: white;
+            padding: 20px;
+        }
+        h1 { color: #4CAF50; }
+        .buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button.danger { background: #f44336; }
+        button.warning { background: #ff9800; }
+        button.primary { background: #2196F3; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border-bottom: 1px solid #444;
+            padding: 10px;
+            text-align: left;
+        }
+        th { color: #4CAF50; }
+        .high { color: #ff4444; }
+        .medium { color: #ffaa44; }
+        .low { color: #44ff44; }
+        .payload {
+            color: #aaa;
+            font-size: 12px;
+            margin-top: 5px;
+            word-break: break-all;
+            font-family: monospace;
+        }
+        .status-ok { color: #4CAF50; }
+        .status-error { color: #f44336; }
+    </style>
+</head>
+<body>
+
+<h1>🛡️ NIDS Dashboard</h1>
+
+<div class="buttons">
+    <button onclick="runAttack('all')">Запустить все атаки</button>
+    <button onclick="runAttack('sql')">SQL Injection</button>
+    <button onclick="runAttack('xss')">XSS</button>
+    <button onclick="runAttack('bruteforce')">Bruteforce</button>
+    <button onclick="runAttack('path_traversal')">Path Traversal</button>
+    <button onclick="runAttack('command_injection')">Command Injection</button>
+</div>
+
+<div class="buttons">
+    <button onclick="checkStatus()" class="primary">Проверить статус</button>
+    <button onclick="clearAlerts()" class="danger">Очистить все</button>
+    <button onclick="refresh()">Обновить данные</button>
+</div>
+
+<div id="statusMsg" style="margin: 10px 0;"></div>
+
+<h2>📋 Последние атаки</h2>
+<table>
+    <thead>
+        <tr><th>Время</th><th>IP адрес</th><th>Тип атаки</th><th>Уровень</th><th>Детали</th></tr>
+    </thead>
+    <tbody id="alerts"></tbody>
+</table>
+
+<script>
+// Функция экранирования HTML для защиты от XSS
+function escapeHtml(text) {
+    if (!text) return '';
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+async function refresh() {
+    try {
+        const res = await fetch('/api/alerts');
+        const data = await res.json();
+        const table = document.getElementById('alerts');
+        table.innerHTML = '';
+        
+        if (data.length === 0) {
+            const row = document.createElement('tr');
+            row.innerHTML = '<td colspan="5" style="text-align: center;">Нет атак в системе</td>';
+            table.appendChild(row);
+            return;
+        }
+        
+        data.forEach(a => {
+            const row = document.createElement('tr');
+            const time = new Date(a.timestamp).toLocaleString();
+            row.innerHTML = `
+                <td>${escapeHtml(time)}</td>
+                <td>${escapeHtml(a.src_ip)}</td>
+                <td>${escapeHtml(a.attack_type)}</td>
+                <td class="${escapeHtml(a.severity)}">${escapeHtml(a.severity)}</td>
+                <td>
+                    <div>${escapeHtml(a.details)}</div>
+                    <div class="payload">${escapeHtml(a.payload || '')}</div>
+                </td>
+            `;
+            table.appendChild(row);
+        });
+    } catch (error) {
+        console.error('Refresh error:', error);
+        const table = document.getElementById('alerts');
+        table.innerHTML = '<tr><td colspan="5" style="color: red;">Ошибка загрузки данных</td></tr>';
+    }
+}
+
+async function runAttack(type) {
+    try {
+        const res = await fetch('/api/juice-shop/attack', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: type })
+        });
+        const data = await res.json();
+        if (data.error) {
+            alert('❌ Ошибка: ' + data.error);
+        } else {
+            alert(`✅ Атака выполнена!\nДобавлено ${data.logs_added} записей в лог.`);
+            refresh();
+        }
+    } catch (error) {
+        console.error('Attack error:', error);
+        alert('❌ Ошибка при выполнении атаки');
+    }
+}
+
+async function checkStatus() {
+    try {
+        const res = await fetch('/api/juice-shop/status');
+        const data = await res.json();
+        const statusDiv = document.getElementById('statusMsg');
+        if (data.status === 'running') {
+            statusDiv.innerHTML = '<span class="status-ok">✅ Juice Shop работает на ' + escapeHtml(data.url) + '</span>';
+        } else {
+            statusDiv.innerHTML = '<span class="status-error">❌ Juice Shop не запущен</span>';
+        }
+        setTimeout(() => { 
+            if (statusDiv.innerHTML) statusDiv.innerHTML = ''; 
+        }, 5000);
+    } catch (error) {
+        console.error('Status check error:', error);
+        document.getElementById('statusMsg').innerHTML = '<span class="status-error">❌ Ошибка проверки статуса</span>';
+    }
+}
+
+async function clearAlerts() {
+    if (!confirm('⚠️ Удалить все алерты и логи? Отменить это действие будет невозможно!')) {
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/clear', { 
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        const data = await res.json();
+        
+        if (data.status === 'success') {
+            alert('✅ ' + data.message);
+            refresh();
+        } else {
+            alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        console.error('Clear error:', error);
+        alert('❌ Ошибка при очистке: ' + error.message);
+    }
+}
+
+// Автообновление каждые 3 секунды
+refresh();
+setInterval(refresh, 3000);
+</script>
+
+</body>
+</html>
